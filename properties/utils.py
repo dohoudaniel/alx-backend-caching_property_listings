@@ -41,52 +41,37 @@ def get_all_properties():
 
 def get_redis_cache_metrics():
     """
-    Connect to Redis via django_redis and retrieve keyspace hits/misses from INFO.
-
-    Returns:
-        dict: {
-            "keyspace_hits": int,
-            "keyspace_misses": int,
-            "hit_ratio": float or None,   # None if no ops yet
-            "raw_info": dict,            # subset of returned INFO for debugging
-        }
-    Notes:
-        - keyspace_hits/misses are server-wide metrics (not per-db).
-        - If redis INFO does not include the fields, values default to 0.
+    Retrieve Redis cache metrics and compute hit ratio.
+    Logs key metrics and errors.
     """
+    from django_redis import get_redis_connection
+
     try:
-        # get_redis_connection will return a redis-py client (StrictRedis/Redis)
         conn = get_redis_connection("default")
-        info = conn.info()  # returns a big dict of server stats
-    except Exception as exc:
-        logger.exception("Failed to connect to Redis to collect metrics: %s", exc)
+        info = conn.info()
+    except Exception as e:
+        logger.error(f"Redis connection error: {e}")
         return {
             "keyspace_hits": 0,
             "keyspace_misses": 0,
-            "hit_ratio": None,
-            "error": str(exc),
+            "hit_ratio": 0,
+            "error": str(e),
         }
 
-    hits = int(info.get("keyspace_hits", 0))
-    misses = int(info.get("keyspace_misses", 0))
-    total = hits + misses
+    keyspace_hits = int(info.get("keyspace_hits", 0))
+    keyspace_misses = int(info.get("keyspace_misses", 0))
+    total_requests = keyspace_hits + keyspace_misses
 
-    hit_ratio = None
-    if total > 0:
-        hit_ratio = hits / total
+    hit_ratio = (keyspace_hits / total_requests) if total_requests > 0 else 0
 
-    # Log the metrics at INFO level
-    logger.info("Redis cache metrics — hits: %d, misses: %d, hit_ratio: %s", hits, misses, 
-                f"{hit_ratio:.3f}" if hit_ratio is not None else "N/A")
+    logger.info(
+        f"Redis Metrics — Hits: {keyspace_hits}, Misses: {keyspace_misses}, "
+        f"Hit Ratio: {hit_ratio:.2f}"
+    )
 
-    # Return a useful structure for programmatic inspection
     return {
-        "keyspace_hits": hits,
-        "keyspace_misses": misses,
+        "keyspace_hits": keyspace_hits,
+        "keyspace_misses": keyspace_misses,
         "hit_ratio": hit_ratio,
-        "raw_info": {
-            "used_memory_human": info.get("used_memory_human"),
-            "instantaneous_ops_per_sec": info.get("instantaneous_ops_per_sec"),
-            # include any other small diagnostics you find useful
-        },
     }
+
